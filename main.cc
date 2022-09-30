@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <type_traits>
 #include <unistd.h>
+#include <utility>
 
 using MAC = std::array<uint8_t, 6>;
 static_assert(sizeof(MAC) == sizeof(uint8_t) * 6);
@@ -186,7 +187,7 @@ public:
                       sizeof(group)) >= 0;
   }
 
-  std::vector<MAC> DumpFDB(uint32_t ifindex) const;
+  std::vector<std::pair<uint32_t, MAC>> DumpFDB(uint32_t ifindex) const;
 
   [[noreturn]] void Listen(const Listener &listener) const;
 
@@ -576,8 +577,9 @@ bool RTNLHandle::UpdateIfs() const {
   return true;
 }
 
-std::vector<MAC> RTNLHandle::DumpFDB(uint32_t ifindex) const {
-  std::vector<MAC> fdb;
+std::vector<std::pair<uint32_t, MAC>>
+RTNLHandle::DumpFDB(uint32_t ifindex) const {
+  std::vector<std::pair<uint32_t, MAC>> fdb;
   struct {
     struct nlmsghdr nlh;
     struct ndmsg ndm;
@@ -625,15 +627,16 @@ std::vector<MAC> RTNLHandle::DumpFDB(uint32_t ifindex) const {
       auto addr = addr_attr->template data<const uint8_t *>();
       if (addr_attr->len() == 6) {
         fdb.emplace_back(
-            MAC{addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]});
+            std::make_pair(msg.ifindex(), MAC{addr[0], addr[1], addr[2],
+                                              addr[3], addr[4], addr[5]}));
       }
     }
     return true;
   });
 
-  for (const auto &mac : fdb) {
-    printf("\tfdb of %u addr %02x:%02x:%02x:%02x:%02x:%02x\n", ifindex, mac[0],
-           mac[1], mac[2], mac[3], mac[4], mac[5]);
+  for (const auto &[idx, mac] : fdb) {
+    printf("\tfdb of %u addr %02x:%02x:%02x:%02x:%02x:%02x from %u\n", ifindex,
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], idx);
   }
 
   return fdb;
@@ -729,7 +732,8 @@ bool IsMlx4Driver(std::string_view ifname) {
 }
 
 void PropagateMac(RTNLHandle &handle, uint32_t master_idx,
-                  const std::vector<MAC> &mac, bool remove) {
+                  const std::vector<std::pair<uint32_t, MAC>> &mac,
+                  bool remove) {
   const auto *iface = handle.FindIf(master_idx);
   if (!iface) {
     fprintf(stderr, "Cannot find if %u\n", master_idx);
@@ -748,7 +752,9 @@ void PropagateMac(RTNLHandle &handle, uint32_t master_idx,
     printf("Subif %s\n", subentry->d_name);
     if (IsMlx4Driver(subentry->d_name)) {
       if (const auto *iface = handle.FindIf(subentry->d_name); iface) {
-        for (const auto &mac : all_mac) {
+        for (const auto &[idx, mac] : all_mac) {
+          if (iface->idx == idx)
+            continue;
           if (remove)
             handle.FdbDelMac(mac, iface->idx);
           else
@@ -803,12 +809,14 @@ bool OnLink(RTNLHandle &handle, const NLMsgHdr &hdr) {
 
     auto fdb = handle.DumpFDB(master_idx);
     if (hdr.type() == RTM_NEWLINK) {
-      for (const auto &mac : fdb) {
-        handle.FdbAddMac(mac, msg.index());
+      for (const auto &[slave_idx, mac] : fdb) {
+        if (iface->idx != slave_idx)
+          handle.FdbAddMac(mac, msg.index());
       }
     } else if (hdr.type() == RTM_DELLINK) {
-      for (const auto &mac : fdb) {
-        handle.FdbDelMac(mac, msg.index());
+      for (const auto &[slave_idx, mac] : fdb) {
+        if (iface->idx != slave_idx)
+          handle.FdbDelMac(mac, msg.index());
       }
     }
   }
@@ -842,7 +850,8 @@ bool OnFdb(RTNLHandle &handle, const NLMsgHdr &hdr) {
         MAC mac{addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]};
         printf("addr %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2],
                mac[3], mac[4], mac[5]);
-        PropagateMac(handle, master_idx, {mac}, hdr.type() == RTM_DELNEIGH);
+        PropagateMac(handle, master_idx, {{msg.ifindex(), mac}},
+                     hdr.type() == RTM_DELNEIGH);
       }
     }
   }
