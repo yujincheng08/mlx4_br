@@ -18,3 +18,10 @@ jobs:
         fetch-depth: 0
     - name: make
       run: make
+    - name: upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: artifacts
+        path: |
+          *.deb
+          *.ipk
