@@ -1,0 +1,9 @@
+Package: mlx4_br
+Architecture: all
+Priority: optional
+Section: net
+Version:
+Maintainer: yujincheng08
+Source: https://github.com/yujincheng08/mlx4_br
+Description: Driver to allow adding mlx4 vf into linux bridge
+Enabled: yes

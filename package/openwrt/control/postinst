@@ -1,0 +1,12 @@
+#!/bin/sh
+
+chmod +x /usr/sbin/mlx4_br
+chmod +x /etc/init.d/mlx4_br
+
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+default_postinst $0 $@
+ret=$?
+/etc/init.d/mlx4_br enable
+/etc/init.d/mlx4_br restart
+exit 0
