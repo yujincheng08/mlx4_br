@@ -23,9 +23,21 @@ openwrt: binary
 	rm -rf $(TMP)/control
 	tar --owner=root --group=root -zcf mlx4_br_$(VERSION)_x86-64.ipk -C $(TMP) .
 	rm -rf $(TMP)
-	@echo "Cleanup openrt package"
+	@echo "Cleanup openwrt package"
 
 debian: binary
+	@echo "Building debian package"
+	$(eval TMP := $(shell mktemp -d))
+	@mkdir -p $(TMP)/usr/sbin
+	cp mlx4_br $(TMP)/usr/sbin/ -af
+	chmod +x $(TMP)/usr/sbin/mlx4_br
+	@mkdir -p $(TMP)/lib/systemd/system
+	cp package/debian/mlx4_br.service $(TMP)/lib/systemd/system/ -af
+	cp package/debian/DEBIAN $(TMP)/ -raf
+	sed -i "s/Version:.*/Version: $(VERSION)/" $(TMP)/DEBIAN/control
+	dpkg -b $(TMP) mlx4_br.$(VERSION).deb
+	rm -rf $(TMP)
+	@echo "Cleanup debian package"
 	
 
 binary:

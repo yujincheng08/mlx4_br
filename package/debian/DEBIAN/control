@@ -1,0 +1,9 @@
+Source: https://github.com/yujincheng08/mlx4_br
+Maintainer: LoveSy <shana@zju.edu.cn>
+Build-Depends: debhelper (>= 8.0.0)
+Version: 
+Section: net
+Package: mlx4-br
+Priority: extra
+Architecture: amd64
+Description: Driver to allow adding mlx4 vf into linux bridge

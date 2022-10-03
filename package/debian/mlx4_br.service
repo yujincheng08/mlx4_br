@@ -1,0 +1,19 @@
+[Unit]
+Description=mlx4 bridge
+Before=network.target
+StartLimitBurst=0
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/mlx4_br
+ExecReload=/bin/kill -1 -- $MAINPID
+ExecStop=/bin/kill -- $MAINPID
+Restart=always
+KillMode=process
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+Alias=mlx4_br.service
