@@ -35,7 +35,7 @@ debian: binary
 	cp package/debian/mlx4_br.service $(TMP)/lib/systemd/system/ -af
 	cp package/debian/DEBIAN $(TMP)/ -raf
 	sed -i "s/Version:.*/Version: $(VERSION)/" $(TMP)/DEBIAN/control
-	dpkg -b $(TMP) mlx4_br.$(VERSION).deb
+	dpkg-deb -b -Zgzip $(TMP) mlx4_br.$(VERSION).deb
 	rm -rf $(TMP)
 	@echo "Cleanup debian package"
 	
