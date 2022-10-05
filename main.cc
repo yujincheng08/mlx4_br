@@ -715,20 +715,39 @@ void RTNLHandle::FdbModifyMac(const MAC &mac, uint32_t ifindex, uint16_t cmd,
   }
 }
 
-bool IsMlx4Driver(std::string_view ifname) {
+std::vector<std::string> IsMlx4Driver(std::string_view ifname) {
   using namespace std::string_literals;
   using namespace std::string_view_literals;
-  std::array<char, PATH_MAX> link;
-  if (auto len = readlink(
-          ("/sys/class/net/"s + ifname.data() + "/device/driver").data(),
-          link.data(), link.size());
-      len > 0) {
-    link[len] = '\0';
-    auto name = basename(link.data());
-    if (name == "mlx4_core"sv)
-      return true;
+  std::array<char, PATH_MAX> buf;
+
+  std::vector<std::string> ifs;
+
+  if (std::unique_ptr<FILE, decltype(&fclose)> slaves(
+          fopen(("/sys/class/net/"s + ifname.data() + "/bonding/slaves").data(),
+                "r"),
+          fclose);
+      slaves) {
+    while (fscanf(slaves.get(), "%s", buf.data()) == 1) {
+      ifs.emplace_back(buf.data());
+    }
+  } else {
+    ifs.emplace_back(ifname);
   }
-  return false;
+
+  std::vector<std::string> ret;
+  ret.reserve(ifs.size());
+  for (auto &ifname : ifs) {
+    if (auto len = readlink(
+            ("/sys/class/net/"s + ifname.data() + "/device/driver").data(),
+            buf.data(), buf.size());
+        len > 0) {
+      buf[len] = '\0';
+      auto name = basename(buf.data());
+      if (name == "mlx4_core"sv)
+        ret.emplace_back(std::move(ifname));
+    }
+  }
+  return ret;
 }
 
 void PropagateMac(RTNLHandle &handle, uint32_t master_idx,
@@ -749,16 +768,25 @@ void PropagateMac(RTNLHandle &handle, uint32_t master_idx,
   for (dirent *subentry; (subentry = readdir(subdir.get()));) {
     if (subentry->d_type != DT_LNK)
       continue;
-    printf("Subif %s\n", subentry->d_name);
-    if (IsMlx4Driver(subentry->d_name)) {
-      if (const auto *iface = handle.FindIf(subentry->d_name); iface) {
+    std::string_view ifname = subentry->d_name;
+    printf("Subif %s\n", ifname.data());
+
+    const auto *iface = handle.FindIf(ifname);
+    if (!iface)
+      continue;
+
+    if (auto subifs = IsMlx4Driver(ifname); !subifs.empty()) {
+      for (const auto &subifname : subifs) {
+        const auto *subiface = handle.FindIf(subifname);
+        if (!subiface)
+          continue;
         for (const auto &[idx, mac] : all_mac) {
-          if (iface->idx == idx)
+          if (iface->idx == idx || subiface->idx == idx)
             continue;
           if (remove)
-            handle.FdbDelMac(mac, iface->idx);
+            handle.FdbDelMac(mac, subiface->idx);
           else
-            handle.FdbAddMac(mac, iface->idx);
+            handle.FdbAddMac(mac, subiface->idx);
         }
       }
     }
@@ -804,19 +832,23 @@ bool OnLink(RTNLHandle &handle, const NLMsgHdr &hdr) {
 
   if (const auto *master = attrs[IFLA_MASTER]; master) {
     auto master_idx = master->template data<uint32_t>();
-    if (!IsMlx4Driver(iface->name))
-      return true;
-
-    auto fdb = handle.DumpFDB(master_idx);
-    if (hdr.type() == RTM_NEWLINK) {
-      for (const auto &[slave_idx, mac] : fdb) {
-        if (iface->idx != slave_idx)
-          handle.FdbAddMac(mac, msg.index());
-      }
-    } else if (hdr.type() == RTM_DELLINK) {
-      for (const auto &[slave_idx, mac] : fdb) {
-        if (iface->idx != slave_idx)
-          handle.FdbDelMac(mac, msg.index());
+    if (auto subifs = IsMlx4Driver(iface->name); !subifs.empty()) {
+      for (const auto &subifname : subifs) {
+        auto subiface = handle.FindIf(subifname);
+        if (!subiface)
+          continue;
+        auto fdb = handle.DumpFDB(master_idx);
+        if (hdr.type() == RTM_NEWLINK) {
+          for (const auto &[slave_idx, mac] : fdb) {
+            if (iface->idx != slave_idx && subiface->idx != slave_idx)
+              handle.FdbAddMac(mac, subiface->idx);
+          }
+        } else if (hdr.type() == RTM_DELLINK) {
+          for (const auto &[slave_idx, mac] : fdb) {
+            if (iface->idx != slave_idx && subiface->idx != slave_idx)
+              handle.FdbDelMac(mac, subiface->idx);
+          }
+        }
       }
     }
   }
