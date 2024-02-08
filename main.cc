@@ -1,7 +1,5 @@
 #include <array>
-#include <cctype>
 #include <cerrno>
-#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -213,15 +211,15 @@ public:
     return nullptr;
   }
 
-  void FdbAddMac(const MAC &mac, uint32_t ifindex) const {
-    printf("fdb add %02x:%02x:%02x:%02x:%02x:%02x to %u\n", mac[0], mac[1],
-           mac[2], mac[3], mac[4], mac[5], ifindex);
-    FdbModifyMac(mac, ifindex, RTM_NEWNEIGH, NLM_F_CREATE | NLM_F_EXCL);
+  void FdbAddMac(const MAC &mac, const If *iface) const {
+    printf("fdb add %02x:%02x:%02x:%02x:%02x:%02x to %s\n", mac[0], mac[1],
+           mac[2], mac[3], mac[4], mac[5], iface->name.data());
+    FdbModifyMac(mac, iface->idx, RTM_NEWNEIGH, NLM_F_CREATE | NLM_F_EXCL);
   }
-  void FdbDelMac(const MAC &mac, uint32_t ifindex) const {
-    printf("fdb del %02x:%02x:%02x:%02x:%02x:%02x from %u\n", mac[0], mac[1],
-           mac[2], mac[3], mac[4], mac[5], ifindex);
-    FdbModifyMac(mac, ifindex, RTM_DELNEIGH, 0);
+  void FdbDelMac(const MAC &mac, const If *iface) const {
+    printf("fdb del %02x:%02x:%02x:%02x:%02x:%02x from %s\n", mac[0], mac[1],
+           mac[2], mac[3], mac[4], mac[5], iface->name.data());
+    FdbModifyMac(mac, iface->idx, RTM_DELNEIGH, 0);
   }
 
   inline ~RTNLHandle() noexcept;
@@ -532,8 +530,6 @@ bool RTNLHandle::UpdateIfs() const {
       .ext_filter_mask = RTEXT_FILTER_VF,
   };
 
-  printf("Dump if\n");
-
   if (send(fd, &req, sizeof(req), 0) < 0) {
     fprintf(stderr, "Cannot send dump if request: %s\n", strerror(errno));
     return false;
@@ -601,7 +597,12 @@ RTNLHandle::DumpFDB(uint32_t ifindex) const {
 
   reinterpret_cast<NLMsgHdr *>(&req.nlh)->AddAttr(IFLA_MASTER, ifindex);
 
-  printf("Dump fdb\n");
+  auto master = FindIf(ifindex);
+
+  if (!master)
+    return fdb;
+
+  printf("Dump fdb of %s\n", master->name.data());
 
   ReceiveDump(req.nlh.nlmsg_seq, [this, &fdb](const auto &hdr) {
     if (hdr.type() != RTM_NEWNEIGH && hdr.type() != RTM_DELNEIGH) {
@@ -635,8 +636,10 @@ RTNLHandle::DumpFDB(uint32_t ifindex) const {
   });
 
   for (const auto &[idx, mac] : fdb) {
-    printf("\tfdb of %u addr %02x:%02x:%02x:%02x:%02x:%02x from %u\n", ifindex,
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], idx);
+    auto slave = FindIf(idx);
+    printf("\tfdb of %s addr %02x:%02x:%02x:%02x:%02x:%02x from %s\n",
+           master->name.data(), mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+           slave->name.data());
   }
 
   return fdb;
@@ -742,8 +745,8 @@ std::vector<std::string> IsMlx4Driver(std::string_view ifname) {
             buf.data(), buf.size());
         len > 0) {
       buf[len] = '\0';
-      auto name = basename(buf.data());
-      if (name == "mlx4_core"sv || name == "ixgbe"sv)
+      std::string_view name = basename(buf.data());
+      if (name == "mlx4_core" || name == "iavf" || name == "ixgbevf")
         ret.emplace_back(std::move(ifname));
     }
   }
@@ -769,7 +772,6 @@ void PropagateMac(RTNLHandle &handle, uint32_t master_idx,
     if (subentry->d_type != DT_LNK)
       continue;
     std::string_view ifname = subentry->d_name;
-    printf("Subif %s\n", ifname.data());
 
     const auto *iface = handle.FindIf(ifname);
     if (!iface)
@@ -784,9 +786,9 @@ void PropagateMac(RTNLHandle &handle, uint32_t master_idx,
           if (iface->idx == idx || subiface->idx == idx)
             continue;
           if (remove)
-            handle.FdbDelMac(mac, subiface->idx);
+            handle.FdbDelMac(mac, subiface);
           else
-            handle.FdbAddMac(mac, subiface->idx);
+            handle.FdbAddMac(mac, subiface);
         }
       }
     }
@@ -841,12 +843,12 @@ bool OnLink(RTNLHandle &handle, const NLMsgHdr &hdr) {
         if (hdr.type() == RTM_NEWLINK) {
           for (const auto &[slave_idx, mac] : fdb) {
             if (iface->idx != slave_idx && subiface->idx != slave_idx)
-              handle.FdbAddMac(mac, subiface->idx);
+              handle.FdbAddMac(mac, subiface);
           }
         } else if (hdr.type() == RTM_DELLINK) {
           for (const auto &[slave_idx, mac] : fdb) {
             if (iface->idx != slave_idx && subiface->idx != slave_idx)
-              handle.FdbDelMac(mac, subiface->idx);
+              handle.FdbDelMac(mac, subiface);
           }
         }
       }
@@ -880,8 +882,6 @@ bool OnFdb(RTNLHandle &handle, const NLMsgHdr &hdr) {
       auto addr = addr_attr->template data<const uint8_t *>();
       if (addr_attr->len() == 6) {
         MAC mac{addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]};
-        printf("addr %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2],
-               mac[3], mac[4], mac[5]);
         PropagateMac(handle, master_idx, {{msg.ifindex(), mac}},
                      hdr.type() == RTM_DELNEIGH);
       }
@@ -892,6 +892,8 @@ bool OnFdb(RTNLHandle &handle, const NLMsgHdr &hdr) {
 }
 
 int main() {
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
   RTNLGroup groups = 0U;
   groups |= RTNLGRP_NEIGH;
   groups |= RTNLGRP_LINK;
