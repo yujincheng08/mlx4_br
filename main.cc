@@ -554,7 +554,7 @@ bool RTNLHandle::UpdateIfs() const {
     if (im != ifs.end()) {
       im->second.flags = ifi.flags(); //   ll_entries_update(im, ifi, tb);
     } else if (const auto *ifname_attr = attrs[IFLA_IFNAME]; ifname_attr) {
-      printf("\tGet if %d -> %s\n", ifi.index(),
+      printf("Get if %d -> %s\n", ifi.index(),
              ifname_attr->template data<const char *>());
       auto [iter, repaced] = ifs.emplace(
           ifi.index(), If{
@@ -796,7 +796,6 @@ void PropagateMac(RTNLHandle &handle, uint32_t master_idx,
 }
 
 void ScanIfs(RTNLHandle &handle) {
-  printf("ScanIfs\n");
   using namespace std::string_view_literals;
   using namespace std::string_literals;
   auto dir = std::unique_ptr<DIR, decltype(&closedir)>{
@@ -834,6 +833,12 @@ bool OnLink(RTNLHandle &handle, const NLMsgHdr &hdr) {
 
   if (const auto *master = attrs[IFLA_MASTER]; master) {
     auto master_idx = master->template data<uint32_t>();
+    if (auto m = handle.FindIf(master_idx);
+        !m ||
+        access(("/sys/class/net/" + m->name + "/brif").data(), F_OK) != 0) {
+      return true;
+    }
+
     if (auto subifs = IsMlx4Driver(iface->name); !subifs.empty()) {
       for (const auto &subifname : subifs) {
         auto subiface = handle.FindIf(subifname);
