@@ -6,7 +6,7 @@ StartLimitIntervalSec=60
 
 [Service]
 Type=simple
-ExecStart=/usr/sbin/mlx4_br
+ExecStart=/usr/bin/mlx4_br
 ExecReload=/bin/kill -1 -- $MAINPID
 ExecStop=/bin/kill -- $MAINPID
 Restart=always

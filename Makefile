@@ -7,9 +7,9 @@ all: debian openwrt
 openwrt: binary
 	@echo "Building openwrt package"
 	$(eval TMP := $(shell mktemp -d))
-	@mkdir -p $(TMP)/root/usr/sbin
-	cp mlx4_br $(TMP)/root/usr/sbin/ -af
-	chmod +x $(TMP)/root/usr/sbin/mlx4_br
+	@mkdir -p $(TMP)/root/usr/bin
+	cp mlx4_br $(TMP)/root/usr/bin/ -af
+	chmod +x $(TMP)/root/usr/bin/mlx4_br
 	@mkdir -p $(TMP)/root/etc/init.d
 	cp package/openwrt/mlx4_br $(TMP)/root/etc/init.d/ -af
 	chmod +x $(TMP)/root/etc/init.d/mlx4_br
@@ -28,9 +28,9 @@ openwrt: binary
 debian: binary
 	@echo "Building debian package"
 	$(eval TMP := $(shell mktemp -d))
-	@mkdir -p $(TMP)/usr/sbin
-	cp mlx4_br $(TMP)/usr/sbin/ -af
-	chmod +x $(TMP)/usr/sbin/mlx4_br
+	@mkdir -p $(TMP)/usr/bin
+	cp mlx4_br $(TMP)/usr/bin/ -af
+	chmod +x $(TMP)/usr/bin/mlx4_br
 	@mkdir -p $(TMP)/lib/systemd/system
 	cp package/debian/mlx4_br.service $(TMP)/lib/systemd/system/ -af
 	cp package/debian/DEBIAN $(TMP)/ -raf

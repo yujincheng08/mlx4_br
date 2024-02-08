@@ -1,6 +1,6 @@
 #!/bin/sh
 
-chmod +x /usr/sbin/mlx4_br
+chmod +x /usr/bin/mlx4_br
 chmod +x /etc/init.d/mlx4_br
 
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
