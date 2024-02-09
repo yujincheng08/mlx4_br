@@ -604,7 +604,7 @@ RTNLHandle::DumpFDB(uint32_t ifindex) const {
 
   printf("Dump fdb of %s\n", master->name.data());
 
-  ReceiveDump(req.nlh.nlmsg_seq, [this, &fdb](const auto &hdr) {
+  ReceiveDump(req.nlh.nlmsg_seq, [this, &fdb, &ifindex](const auto &hdr) {
     if (hdr.type() != RTM_NEWNEIGH && hdr.type() != RTM_DELNEIGH) {
       fprintf(stderr, "Not support msg: %08x %08x %08x\n", hdr.len(),
               hdr.type(), hdr.flags());
@@ -624,7 +624,8 @@ RTNLHandle::DumpFDB(uint32_t ifindex) const {
     auto attrs = msg.template attr<NDA_MAX>(hdr.len());
 
     if (const auto *addr_attr = attrs[NDA_LLADDR];
-        addr_attr && attrs[NDA_MASTER] && !attrs[NDA_VLAN]) {
+        addr_attr && !attrs[NDA_VLAN] &&
+        (attrs[NDA_MASTER] || msg.ifindex() == ifindex)) {
       auto addr = addr_attr->template data<const uint8_t *>();
       if (addr_attr->len() == 6) {
         fdb.emplace_back(
