@@ -747,7 +747,7 @@ std::vector<std::string> IsMlx4Driver(std::string_view ifname) {
         len > 0) {
       buf[len] = '\0';
       std::string_view name = basename(buf.data());
-      if (name == "mlx4_core" || name == "iavf" || name == "ixgbevf")
+      if (name == "mlx4_core" || name == "iavf" || name == "ixgbevf" || name == "mlx5_core")
         ret.emplace_back(std::move(ifname));
     }
   }
