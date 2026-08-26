@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -624,8 +625,7 @@ RTNLHandle::DumpFDB(uint32_t ifindex) const {
     auto attrs = msg.template attr<NDA_MAX>(hdr.len());
 
     if (const auto *addr_attr = attrs[NDA_LLADDR];
-        addr_attr && !attrs[NDA_VLAN] &&
-        (attrs[NDA_MASTER] || msg.ifindex() == ifindex)) {
+        addr_attr && (attrs[NDA_MASTER] || msg.ifindex() == ifindex)) {
       auto addr = addr_attr->template data<const uint8_t *>();
       if (addr_attr->len() == 6) {
         fdb.emplace_back(
@@ -635,6 +635,12 @@ RTNLHandle::DumpFDB(uint32_t ifindex) const {
     }
     return true;
   });
+
+  // A vlan_filtering bridge holds one entry per VLAN, so the same address
+  // arrives several times. The NIC's unicast filter has no VLAN dimension:
+  // register it once.
+  std::sort(fdb.begin(), fdb.end());
+  fdb.erase(std::unique(fdb.begin(), fdb.end()), fdb.end());
 
   for (const auto &[idx, mac] : fdb) {
     auto slave = FindIf(idx);
@@ -878,18 +884,24 @@ bool OnFdb(RTNLHandle &handle, const NLMsgHdr &hdr) {
 
   auto attrs = msg.template attr<NDA_MAX>(hdr.len());
 
-  // skip vlan entries first
-  if (attrs[NDA_VLAN])
-    return true;
-
   if (const auto *master = attrs[NDA_MASTER]; master) {
     auto master_idx = master->template data<uint32_t>();
     if (const auto *addr_attr = attrs[NDA_LLADDR]; addr_attr) {
       auto addr = addr_attr->template data<const uint8_t *>();
       if (addr_attr->len() == 6) {
         MAC mac{addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]};
-        PropagateMac(handle, master_idx, {{msg.ifindex(), mac}},
-                     hdr.type() == RTM_DELNEIGH);
+        bool remove = hdr.type() == RTM_DELNEIGH;
+        // On a vlan_filtering bridge an address is learnt once per VLAN, so a
+        // single delete does not mean it is gone - it may still be present in
+        // another VLAN, and taking it out of the filter then breaks traffic
+        // that is still live. Ask the bridge before removing anything.
+        if (remove && attrs[NDA_VLAN]) {
+          for (const auto &[idx, other] : handle.DumpFDB(master_idx)) {
+            if (idx == msg.ifindex() && other == mac)
+              return true;
+          }
+        }
+        PropagateMac(handle, master_idx, {{msg.ifindex(), mac}}, remove);
       }
     }
   }
